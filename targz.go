@@ -1,4 +1,4 @@
-package tarball
+package targz
 
 import (
     "archive/tar"
@@ -7,19 +7,22 @@ import (
     "io"
     "fmt"
     "path/filepath"
+    "strings"
+    "regexp"
 )
 
-func writeToTar(tarWriter *tar.Writer, fileInfo os.FileInfo, targetPath string) (error) {
+func writeToTar(tarWriter *tar.Writer, fileInfo os.FileInfo, sourcePath string, basePath string) (error) {
     header, infoErr := tar.FileInfoHeader(fileInfo, fileInfo.Name())
+    fmt.Println(fileInfo.Name())
+    header.Name = strings.Split(sourcePath, basePath)[1]
     if (infoErr != nil) {
         return infoErr
     }
-
     if writeErr := tarWriter.WriteHeader(header); writeErr != nil {
         return writeErr
     }
 
-    fileReader, openErr := os.Open(targetPath)
+    fileReader, openErr := os.Open(sourcePath)
     if (openErr != nil) {
         return openErr
     }
@@ -48,22 +51,23 @@ func makeTar(source string) (error) {
     if (statErr != nil) {
         return statErr
     }
-
+    source += "/"
     if (!fileInfo.IsDir()) {
-        return writeToTar(tarWriter, fileInfo, source)
+        return writeToTar(tarWriter, fileInfo, source, source)
+    } else {
+        // no err, walk the directory and tar all files
+        return filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+            if (info.IsDir()) {
+                return nil
+            }
+            if (err != nil) {
+                return err
+            }
+            return writeToTar(tarWriter, info, path, source)
+        })
     }
 
-    // no err, walk the directory and tar all files
-    return filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-        if (info.IsDir()) {
-            return nil
-        }
 
-        if (err != nil) {
-            return err
-        }
-        return writeToTar(tarWriter, info, path)
-    })
 }
 
 
@@ -93,12 +97,13 @@ func Pack(sourcePath string, targetPath string) (error) {
         return copyErr
     }
     deleteErr := os.Remove(tarFilePath)
-    fmt.Println(deleteErr)
     return deleteErr
 }
 
 // unpacks the content of sourcepath (gzipped tar), into the targetPath
 func Unpack(sourcePath string, targetPath string) (error) {
+    regex, _ := regexp.Compile("([\\s\\S]*)\\/[\\s\\S]*$");
+
     // open file
     reader, openErr := os.Open(sourcePath)
     if (openErr != nil) {
@@ -118,21 +123,30 @@ func Unpack(sourcePath string, targetPath string) (error) {
         if (err == io.EOF) {
             break;
         }
-        info := header.FileInfo()
-        if (info.IsDir()) {
-            mkdirErr := os.MkdirAll(header.Name, info.Mode())
+        fmt.Println(header.Name)
+        matches := regex.FindStringSubmatch(header.Name)
+        fmt.Println(matches);
+        var path string
+        if (len(matches) > 0) {
+            path = matches[1]
+        } else {
+            path = ""
+        }
+
+        if (len(path) > 0) {
+            mkdirErr := os.MkdirAll(filepath.Join(targetPath, path), 0777)
             if (mkdirErr != nil) {
                 return mkdirErr
             }
-        } else {
-            file, createErr := os.Create(filepath.Join(targetPath, header.Name))
-            if (createErr != nil) {
-                return createErr
-            }
-            _, copyErr := io.Copy(file, tarReader)
-            if (copyErr != nil) {
-                return copyErr
-            }
+        }
+        file, createErr := os.Create(filepath.Join(targetPath, header.Name))
+        defer file.Close()
+        if (createErr != nil) {
+            return createErr
+        }
+        _, copyErr := io.Copy(file, tarReader)
+        if (copyErr != nil) {
+            return copyErr
         }
     }
     return nil
