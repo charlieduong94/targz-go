@@ -11,10 +11,22 @@ import (
     "regexp"
 )
 
-func writeToTar(tarWriter *tar.Writer, fileInfo os.FileInfo, sourcePath string, basePath string) (error) {
+func listToMap(ignoreList []string) (map[string]bool) {
+    ignoreMap := make(map[string]bool)
+    for _, value := range ignoreList {
+        ignoreMap[value] = true
+    }
+    return ignoreMap
+}
+
+func writeToTar(tarWriter *tar.Writer, fileInfo os.FileInfo, sourcePath string, basePath string, ignoreMap map[string]bool) (error) {
     header, infoErr := tar.FileInfoHeader(fileInfo, fileInfo.Name())
-    fmt.Println(fileInfo.Name())
-    header.Name = strings.Split(sourcePath, basePath)[1]
+    name := strings.Split(sourcePath, basePath)[1]
+    regex, _ := regexp.Compile("[^\\/]*")
+    if (ignoreMap[regex.FindString(name)]) {
+        return nil
+    }
+    header.Name = name
     if (infoErr != nil) {
         return infoErr
     }
@@ -35,7 +47,7 @@ func writeToTar(tarWriter *tar.Writer, fileInfo os.FileInfo, sourcePath string, 
  *
  *
  */
-func makeTar(source string) (error) {
+func makeTar(source string, ignore map[string]bool) (error) {
     // create a tarfile
     target := fmt.Sprintf("%s.tar", source)
     tarfile, createErr := os.Create(target)
@@ -53,7 +65,7 @@ func makeTar(source string) (error) {
     }
     source += "/"
     if (!fileInfo.IsDir()) {
-        return writeToTar(tarWriter, fileInfo, source, source)
+        return writeToTar(tarWriter, fileInfo, source, source, ignore)
     } else {
         // no err, walk the directory and tar all files
         return filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
@@ -63,21 +75,19 @@ func makeTar(source string) (error) {
             if (err != nil) {
                 return err
             }
-            return writeToTar(tarWriter, info, path, source)
+            return writeToTar(tarWriter, info, path, source, ignore)
         })
     }
 
 
 }
 
-
-func Pack(sourcePath string, targetPath string) (error) {
+func packageAndCompress(sourcePath string, targetPath string, ignoreMap map[string]bool) (error) {
     tarFilePath := fmt.Sprintf("%s.tar", sourcePath)
-    tarErr := makeTar(sourcePath)
+    tarErr := makeTar(sourcePath, ignoreMap)
     if (tarErr != nil) {
         return tarErr
     }
-
     reader, readErr := os.Open(tarFilePath);
     if (readErr != nil) {
         return readErr
@@ -98,6 +108,16 @@ func Pack(sourcePath string, targetPath string) (error) {
     }
     deleteErr := os.Remove(tarFilePath)
     return deleteErr
+}
+
+func Pack(sourcePath string, targetPath string) (error) {
+    var ignoreMap map[string]bool
+    return packageAndCompress(sourcePath, targetPath, ignoreMap)
+}
+
+func PackIgnore(sourcePath string, targetPath string, ignoreList []string) (error) {
+    ignoreMap := listToMap(ignoreList)
+    return packageAndCompress(sourcePath, targetPath, ignoreMap)
 }
 
 // unpacks the content of sourcepath (gzipped tar), into the targetPath
@@ -123,9 +143,7 @@ func Unpack(sourcePath string, targetPath string) (error) {
         if (err == io.EOF) {
             break;
         }
-        fmt.Println(header.Name)
         matches := regex.FindStringSubmatch(header.Name)
-        fmt.Println(matches);
         var path string
         if (len(matches) > 0) {
             path = matches[1]

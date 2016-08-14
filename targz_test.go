@@ -10,7 +10,7 @@ func TestPack(t *testing.T) {
     dir, _ := os.Getwd()
     target := fmt.Sprintf("%s/%s", dir, "test.tar.gz")
     source := dir
-    err := Pack(source, target)
+    err := PackIgnore(source, target, []string{".git"})
     if (err != nil) {
         fmt.Println(err)
         t.Fail()
